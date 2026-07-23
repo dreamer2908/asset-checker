@@ -7,72 +7,118 @@ using Microsoft.EntityFrameworkCore;
 
 namespace LegacyWebBridge.Controllers
 {
+    /// <summary>
+    /// Data Transfer Object representing an individual asset item for API responses and Excel export.
+    /// Property names correspond to the exact Chinese field names expected by the legacy frontend.
+    /// </summary>
     public class AssetDto
     {
+        /// <summary>Gets or sets the asset ID (資產編號).</summary>
         [JsonPropertyName("資產編號")]
         public string 資產編號 { get; set; } = string.Empty;
 
+        /// <summary>Gets or sets the asset name (資產名稱).</summary>
         [JsonPropertyName("資產名稱")]
         public string 資產名稱 { get; set; } = string.Empty;
 
+        /// <summary>Gets or sets the asset specification (資產規格).</summary>
         [JsonPropertyName("資產規格")]
         public string 資產規格 { get; set; } = string.Empty;
 
+        /// <summary>Gets or sets the custodian employee code (保管人).</summary>
         [JsonPropertyName("保管人")]
         public string 保管人 { get; set; } = string.Empty;
 
+        /// <summary>Gets or sets the custodian employee name (姓名).</summary>
         [JsonPropertyName("姓名")]
         public string 姓名 { get; set; } = string.Empty;
 
+        /// <summary>Gets or sets the custodian department code (保管代號).</summary>
         [JsonPropertyName("保管代號")]
         public string 保管代號 { get; set; } = string.Empty;
 
+        /// <summary>Gets or sets the custodian department name (保管人部門).</summary>
         [JsonPropertyName("保管人部門")]
         public string 保管人部門 { get; set; } = string.Empty;
 
+        /// <summary>Gets or sets the storage location (放置地點).</summary>
         [JsonPropertyName("放置地點")]
         public string 放置地點 { get; set; } = string.Empty;
 
+        /// <summary>Gets or sets the supplier vendor code (供應廠商).</summary>
         [JsonPropertyName("供應廠商")]
         public string 供應廠商 { get; set; } = string.Empty;
 
+        /// <summary>Gets or sets the supplier vendor abbreviation (供應商簡稱).</summary>
         [JsonPropertyName("供應商簡稱")]
         public string 供應商簡稱 { get; set; } = string.Empty;
 
+        /// <summary>Gets or sets the management category code (管理區分).</summary>
         [JsonPropertyName("管理區分")]
         public string 管理區分 { get; set; } = string.Empty;
 
+        /// <summary>Gets or sets the remarks/notes (備註).</summary>
         [JsonPropertyName("備註")]
         public string 備註 { get; set; } = string.Empty;
     }
 
+    /// <summary>
+    /// API response wrapper containing paged asset data array and total matching record count.
+    /// </summary>
     public class AssetsResponse
     {
+        /// <summary>Gets or sets the list of asset DTOs matching the query for the requested page.</summary>
         [JsonPropertyName("data")]
         public List<AssetDto> Data { get; set; } = new();
 
+        /// <summary>Gets or sets the total count of matching asset records before pagination.</summary>
         [JsonPropertyName("total")]
         public int Total { get; set; }
     }
 
+    /// <summary>
+    /// Internal projection container wrapping joined entity records from ASTMB, ASTMC, CMSME, and CMSMV.
+    /// </summary>
     internal class FilteredAssetRecord
     {
+        /// <summary>Gets or sets the primary asset master entity (ASTMB).</summary>
         public Astmb Astmb { get; set; } = null!;
+
+        /// <summary>Gets or sets the asset custody entity (ASTMC).</summary>
         public Astmc Astmc { get; set; } = null!;
+
+        /// <summary>Gets or sets the optional department master entity (CMSME).</summary>
         public Cmsme? Cmsme { get; set; }
+
+        /// <summary>Gets or sets the optional employee master entity (CMSMV).</summary>
         public Cmsmv? Cmsmv { get; set; }
     }
 
+    /// <summary>
+    /// ASP.NET Core API controller serving asset queries and Excel export endpoints.
+    /// Replaces the legacy Node.js Express router (server.js).
+    /// </summary>
     [ApiController]
     public class AssetsController : ControllerBase
     {
         private readonly AppDbContext _context;
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="AssetsController"/> class.
+        /// </summary>
+        /// <param name="context">Database context for EF Core SQL Server queries.</param>
         public AssetsController(AppDbContext context)
         {
             _context = context;
         }
 
+        /// <summary>
+        /// Constructs the base filtered LINQ query joining ASTMB, ASTMC, CMSME, and CMSMV entities.
+        /// Applies standard business rules and optional case-insensitive wildcard filters for managerType and assetId.
+        /// </summary>
+        /// <param name="managerType">Optional management category filter code (e.g. 'G', 'M', 'L', 'I', 'K'). Case-insensitive.</param>
+        /// <param name="assetId">Optional asset ID filter string. Supports '?', '_', '*', and '%' wildcards. Case-insensitive.</param>
+        /// <returns>An unexecuted <see cref="IQueryable{FilteredAssetRecord}"/> with applied filters.</returns>
         private IQueryable<FilteredAssetRecord> GetFilteredAssetQuery(string? managerType, string? assetId)
         {
             var baseQuery = from a in _context.Astmbs
@@ -115,6 +161,13 @@ namespace LegacyWebBridge.Controllers
             return baseQuery;
         }
 
+        /// <summary>
+        /// Executes the asset query against SQL Server, applying ordering, optional pagination, projection, and string trimming.
+        /// </summary>
+        /// <param name="baseQuery">Filtered asset query.</param>
+        /// <param name="skip">Number of records to skip for pagination (optional).</param>
+        /// <param name="take">Number of records to take for pagination (optional).</param>
+        /// <returns>A task that resolves to a list of populated <see cref="AssetDto"/> objects.</returns>
         private async Task<List<AssetDto>> FetchAssetDtosAsync(IQueryable<FilteredAssetRecord> baseQuery, int? skip = null, int? take = null)
         {
             IQueryable<FilteredAssetRecord> queryToFetch = baseQuery.OrderBy(x => x.Astmb.Mb001);
@@ -164,6 +217,15 @@ namespace LegacyWebBridge.Controllers
             }).ToList();
         }
 
+        /// <summary>
+        /// Endpoint: GET /assets or GET /api/assets
+        /// Retrieves a paginated list of assets and the total matching count.
+        /// </summary>
+        /// <param name="page">Page index (1-based, default: 1).</param>
+        /// <param name="pageSize">Number of records per page (default: 20).</param>
+        /// <param name="managerType">Filter by management category (optional, case-insensitive).</param>
+        /// <param name="assetId">Filter by asset ID with wildcard support ('?', '_', '*', '%', case-insensitive).</param>
+        /// <returns>JSON object with data array and total count.</returns>
         [HttpGet("assets")]
         [HttpGet("api/assets")]
         public async Task<IActionResult> GetAssets(
@@ -188,6 +250,13 @@ namespace LegacyWebBridge.Controllers
             });
         }
 
+        /// <summary>
+        /// Endpoint: GET /export or GET /api/export
+        /// Exports all matching asset records to an Excel file (.xlsx) based on query parameters.
+        /// </summary>
+        /// <param name="managerType">Filter by management category (optional, case-insensitive).</param>
+        /// <param name="assetId">Filter by asset ID with wildcard support ('?', '_', '*', '%', case-insensitive).</param>
+        /// <returns>Spreadsheet document stream with Excel content type and attachment disposition.</returns>
         [HttpGet("export")]
         [HttpGet("api/export")]
         public async Task<IActionResult> Export(
