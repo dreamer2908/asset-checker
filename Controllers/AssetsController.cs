@@ -96,12 +96,20 @@ namespace LegacyWebBridge.Controllers
 
             if (!string.IsNullOrWhiteSpace(managerType))
             {
-                baseQuery = baseQuery.Where(x => x.Astmb.Mb013 == managerType);
+                string mgr = managerType.Trim().ToUpper();
+                baseQuery = baseQuery.Where(x => x.Astmb.Mb013 != null && x.Astmb.Mb013.ToUpper() == mgr);
             }
 
             if (!string.IsNullOrWhiteSpace(assetId))
             {
-                baseQuery = baseQuery.Where(x => x.Astmb.Mb001.Contains(assetId));
+                string term = assetId.Trim();
+                bool hasWildcards = term.Contains('?') || term.Contains('_') || term.Contains('*') || term.Contains('%');
+
+                string pattern = (hasWildcards
+                    ? term.Replace('?', '_').Replace('*', '%')
+                    : $"%{term}%").ToLower();
+
+                baseQuery = baseQuery.Where(x => EF.Functions.Like(x.Astmb.Mb001.Trim().ToLower(), pattern));
             }
 
             return baseQuery;
