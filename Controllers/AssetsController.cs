@@ -55,6 +55,14 @@ namespace LegacyWebBridge.Controllers
         public int Total { get; set; }
     }
 
+    internal class FilteredAssetRecord
+    {
+        public Astmb Astmb { get; set; } = null!;
+        public Astmc Astmc { get; set; } = null!;
+        public Cmsme? Cmsme { get; set; }
+        public Cmsmv? Cmsmv { get; set; }
+    }
+
     [ApiController]
     public class AssetsController : ControllerBase
     {
@@ -63,6 +71,89 @@ namespace LegacyWebBridge.Controllers
         public AssetsController(AppDbContext context)
         {
             _context = context;
+        }
+
+        private IQueryable<FilteredAssetRecord> GetFilteredAssetQuery(string? managerType, string? assetId)
+        {
+            var baseQuery = from a in _context.Astmbs
+                            join b in _context.Astmcs on a.Mb001 equals b.Mc001
+                            join c in _context.Cmsmes on b.Mc002 equals c.Me001 into bc
+                            from c in bc.DefaultIfEmpty()
+                            join d in _context.Cmsmvs on b.Mc003 equals d.Mv001 into bd
+                            from d in bd.DefaultIfEmpty()
+                            where b.Mc004 > 0
+                               && a.Mb013 != null && a.Mb013 != ""
+                               && a.Mb017 == ""
+                               && a.Mb013 != "P" && a.Mb013 != "A"
+                               && a.Mb039 == "Y"
+                            select new FilteredAssetRecord
+                            {
+                                Astmb = a,
+                                Astmc = b,
+                                Cmsme = c,
+                                Cmsmv = d
+                            };
+
+            if (!string.IsNullOrWhiteSpace(managerType))
+            {
+                baseQuery = baseQuery.Where(x => x.Astmb.Mb013 == managerType);
+            }
+
+            if (!string.IsNullOrWhiteSpace(assetId))
+            {
+                baseQuery = baseQuery.Where(x => x.Astmb.Mb001.Contains(assetId));
+            }
+
+            return baseQuery;
+        }
+
+        private async Task<List<AssetDto>> FetchAssetDtosAsync(IQueryable<FilteredAssetRecord> baseQuery, int? skip = null, int? take = null)
+        {
+            IQueryable<FilteredAssetRecord> queryToFetch = baseQuery.OrderBy(x => x.Astmb.Mb001);
+
+            if (skip.HasValue)
+            {
+                queryToFetch = queryToFetch.Skip(skip.Value);
+            }
+
+            if (take.HasValue)
+            {
+                queryToFetch = queryToFetch.Take(take.Value);
+            }
+
+            var rawItems = await queryToFetch
+                .Select(x => new
+                {
+                    Mb001 = x.Astmb.Mb001,
+                    Mb002 = x.Astmb.Mb002,
+                    Mb003 = x.Astmb.Mb003,
+                    Mc003 = x.Astmc.Mc003,
+                    Mv002 = x.Cmsmv != null ? x.Cmsmv.Mv002 : null,
+                    Mc002 = x.Astmc.Mc002,
+                    Me002 = x.Cmsme != null ? x.Cmsme.Me002 : null,
+                    Mc006 = x.Astmc.Mc006,
+                    Mb007 = x.Astmb.Mb007,
+                    Mb008 = x.Astmb.Mb008,
+                    Mb013 = x.Astmb.Mb013,
+                    Mc005 = x.Astmc.Mc005
+                })
+                .ToListAsync();
+
+            return rawItems.Select(x => new AssetDto
+            {
+                資產編號 = x.Mb001?.Trim() ?? "",
+                資產名稱 = x.Mb002?.Trim() ?? "",
+                資產規格 = x.Mb003?.Trim() ?? "",
+                保管人 = x.Mc003?.Trim() ?? "",
+                姓名 = x.Mv002?.Trim() ?? "",
+                保管代號 = x.Mc002?.Trim() ?? "",
+                保管人部門 = x.Me002?.Trim() ?? "",
+                放置地點 = x.Mc006?.Trim() ?? "",
+                供應廠商 = x.Mb007?.Trim() ?? "",
+                供應商簡稱 = x.Mb008?.Trim() ?? "",
+                管理區分 = x.Mb013?.Trim() ?? "",
+                備註 = x.Mc005?.Trim() ?? ""
+            }).ToList();
         }
 
         [HttpGet("assets")]
@@ -77,67 +168,10 @@ namespace LegacyWebBridge.Controllers
             if (pageSize < 1) pageSize = 20;
             int offset = (page - 1) * pageSize;
 
-            var baseQuery = from a in _context.Astmbs
-                            join b in _context.Astmcs on a.Mb001 equals b.Mc001
-                            join c in _context.Cmsmes on b.Mc002 equals c.Me001 into bc
-                            from c in bc.DefaultIfEmpty()
-                            join d in _context.Cmsmvs on b.Mc003 equals d.Mv001 into bd
-                            from d in bd.DefaultIfEmpty()
-                            where b.Mc004 > 0
-                               && a.Mb013 != null && a.Mb013 != ""
-                               && a.Mb017 == ""
-                               && a.Mb013 != "P" && a.Mb013 != "A"
-                               && a.Mb039 == "Y"
-                            select new { a, b, c, d };
-
-            if (!string.IsNullOrWhiteSpace(managerType))
-            {
-                baseQuery = baseQuery.Where(x => x.a.Mb013 == managerType);
-            }
-
-            if (!string.IsNullOrWhiteSpace(assetId))
-            {
-                baseQuery = baseQuery.Where(x => x.a.Mb001.Contains(assetId));
-            }
+            var baseQuery = GetFilteredAssetQuery(managerType, assetId);
 
             int total = await baseQuery.CountAsync();
-
-            var rawItems = await baseQuery
-                .OrderBy(x => x.a.Mb001)
-                .Skip(offset)
-                .Take(pageSize)
-                .Select(x => new
-                {
-                    Mb001 = x.a.Mb001,
-                    Mb002 = x.a.Mb002,
-                    Mb003 = x.a.Mb003,
-                    Mc003 = x.b.Mc003,
-                    Mv002 = x.d != null ? x.d.Mv002 : null,
-                    Mc002 = x.b.Mc002,
-                    Me002 = x.c != null ? x.c.Me002 : null,
-                    Mc006 = x.b.Mc006,
-                    Mb007 = x.a.Mb007,
-                    Mb008 = x.a.Mb008,
-                    Mb013 = x.a.Mb013,
-                    Mc005 = x.b.Mc005
-                })
-                .ToListAsync();
-
-            var data = rawItems.Select(x => new AssetDto
-            {
-                資產編號 = x.Mb001?.Trim() ?? "",
-                資產名稱 = x.Mb002?.Trim() ?? "",
-                資產規格 = x.Mb003?.Trim() ?? "",
-                保管人 = x.Mc003?.Trim() ?? "",
-                姓名 = x.Mv002?.Trim() ?? "",
-                保管代號 = x.Mc002?.Trim() ?? "",
-                保管人部門 = x.Me002?.Trim() ?? "",
-                放置地點 = x.Mc006?.Trim() ?? "",
-                供應廠商 = x.Mb007?.Trim() ?? "",
-                供應商簡稱 = x.Mb008?.Trim() ?? "",
-                管理區分 = x.Mb013?.Trim() ?? "",
-                備註 = x.Mc005?.Trim() ?? ""
-            }).ToList();
+            var data = await FetchAssetDtosAsync(baseQuery, offset, pageSize);
 
             return Ok(new AssetsResponse
             {
@@ -152,63 +186,8 @@ namespace LegacyWebBridge.Controllers
             [FromQuery] string? managerType = null,
             [FromQuery] string? assetId = null)
         {
-            var baseQuery = from a in _context.Astmbs
-                            join b in _context.Astmcs on a.Mb001 equals b.Mc001
-                            join c in _context.Cmsmes on b.Mc002 equals c.Me001 into bc
-                            from c in bc.DefaultIfEmpty()
-                            join d in _context.Cmsmvs on b.Mc003 equals d.Mv001 into bd
-                            from d in bd.DefaultIfEmpty()
-                            where b.Mc004 > 0
-                               && a.Mb013 != null && a.Mb013 != ""
-                               && a.Mb017 == ""
-                               && a.Mb013 != "P" && a.Mb013 != "A"
-                               && a.Mb039 == "Y"
-                            select new { a, b, c, d };
-
-            if (!string.IsNullOrWhiteSpace(managerType))
-            {
-                baseQuery = baseQuery.Where(x => x.a.Mb013 == managerType);
-            }
-
-            if (!string.IsNullOrWhiteSpace(assetId))
-            {
-                baseQuery = baseQuery.Where(x => x.a.Mb001.Contains(assetId));
-            }
-
-            var rawItems = await baseQuery
-                .OrderBy(x => x.a.Mb001)
-                .Select(x => new
-                {
-                    Mb001 = x.a.Mb001,
-                    Mb002 = x.a.Mb002,
-                    Mb003 = x.a.Mb003,
-                    Mc003 = x.b.Mc003,
-                    Mv002 = x.d != null ? x.d.Mv002 : null,
-                    Mc002 = x.b.Mc002,
-                    Me002 = x.c != null ? x.c.Me002 : null,
-                    Mc006 = x.b.Mc006,
-                    Mb007 = x.a.Mb007,
-                    Mb008 = x.a.Mb008,
-                    Mb013 = x.a.Mb013,
-                    Mc005 = x.b.Mc005
-                })
-                .ToListAsync();
-
-            var data = rawItems.Select(x => new AssetDto
-            {
-                資產編號 = x.Mb001?.Trim() ?? "",
-                資產名稱 = x.Mb002?.Trim() ?? "",
-                資產規格 = x.Mb003?.Trim() ?? "",
-                保管人 = x.Mc003?.Trim() ?? "",
-                姓名 = x.Mv002?.Trim() ?? "",
-                保管代號 = x.Mc002?.Trim() ?? "",
-                保管人部門 = x.Me002?.Trim() ?? "",
-                放置地點 = x.Mc006?.Trim() ?? "",
-                供應廠商 = x.Mb007?.Trim() ?? "",
-                供應商簡稱 = x.Mb008?.Trim() ?? "",
-                管理區分 = x.Mb013?.Trim() ?? "",
-                備註 = x.Mc005?.Trim() ?? ""
-            }).ToList();
+            var baseQuery = GetFilteredAssetQuery(managerType, assetId);
+            var data = await FetchAssetDtosAsync(baseQuery);
 
             using var workbook = new XLWorkbook();
             var worksheet = workbook.Worksheets.Add("資產");
