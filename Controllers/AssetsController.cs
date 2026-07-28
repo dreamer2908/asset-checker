@@ -2,6 +2,7 @@ using System.Data;
 using System.Text.Json.Serialization;
 using ClosedXML.Excel;
 using LegacyWebBridge.Models;
+using LegacyWebBridge.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -77,48 +78,91 @@ namespace LegacyWebBridge.Controllers
     }
 
     /// <summary>
+    /// Data Transfer Object representing a custodian search record.
+    /// </summary>
+    public class CustodianDto
+    {
+        [JsonPropertyName("保管人")]
+        public string 保管人 { get; set; } = string.Empty;
+
+        [JsonPropertyName("姓名")]
+        public string 姓名 { get; set; } = string.Empty;
+
+        [JsonPropertyName("保管代號")]
+        public string 保管代號 { get; set; } = string.Empty;
+
+        [JsonPropertyName("保管人部門")]
+        public string 保管人部門 { get; set; } = string.Empty;
+
+        [JsonPropertyName("isBookmarked")]
+        public bool IsBookmarked { get; set; }
+    }
+
+    /// <summary>
+    /// Data Transfer Object representing a department search record.
+    /// </summary>
+    public class DepartmentDto
+    {
+        [JsonPropertyName("保管代號")]
+        public string 保管代號 { get; set; } = string.Empty;
+
+        [JsonPropertyName("保管人部門")]
+        public string 保管人部門 { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// Request model for toggling a bookmark.
+    /// </summary>
+    public class ToggleBookmarkRequest
+    {
+        [JsonPropertyName("custodianCode")]
+        public string CustodianCode { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// Request model for editing asset custody info.
+    /// </summary>
+    public class EditAssetRequest
+    {
+        [JsonPropertyName("保管人")]
+        public string 保管人 { get; set; } = string.Empty;
+
+        [JsonPropertyName("保管代號")]
+        public string 保管代號 { get; set; } = string.Empty;
+
+        [JsonPropertyName("放置地點")]
+        public string 放置地點 { get; set; } = string.Empty;
+
+        [JsonPropertyName("備註")]
+        public string 備註 { get; set; } = string.Empty;
+    }
+
+    /// <summary>
     /// Internal projection container wrapping joined entity records from ASTMB, ASTMC, CMSME, and CMSMV.
     /// </summary>
     internal class FilteredAssetRecord
     {
-        /// <summary>Gets or sets the primary asset master entity (ASTMB).</summary>
         public Astmb Astmb { get; set; } = null!;
-
-        /// <summary>Gets or sets the asset custody entity (ASTMC).</summary>
         public Astmc Astmc { get; set; } = null!;
-
-        /// <summary>Gets or sets the optional department master entity (CMSME).</summary>
         public Cmsme? Cmsme { get; set; }
-
-        /// <summary>Gets or sets the optional employee master entity (CMSMV).</summary>
         public Cmsmv? Cmsmv { get; set; }
     }
 
     /// <summary>
-    /// ASP.NET Core API controller serving asset queries and Excel export endpoints.
-    /// Replaces the legacy Node.js Express router (server.js).
+    /// ASP.NET Core API controller serving asset queries, custodian/department search, bookmarks, and edit endpoints.
     /// </summary>
     [ApiController]
     public class AssetsController : ControllerBase
     {
         private readonly AppDbContext _context;
+        private readonly IniSettingsService _settingsService;
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="AssetsController"/> class.
-        /// </summary>
-        /// <param name="context">Database context for EF Core SQL Server queries.</param>
-        public AssetsController(AppDbContext context)
+        public AssetsController(AppDbContext context, IniSettingsService settingsService)
         {
             _context = context;
+            _settingsService = settingsService;
         }
 
-        /// <summary>
-        /// Constructs the base filtered LINQ query joining ASTMB, ASTMC, CMSME, and CMSMV entities.
-        /// Applies standard business rules and optional case-insensitive wildcard filters for managerType and assetId.
-        /// </summary>
-        /// <param name="managerType">Optional management category filter code (e.g. 'G', 'M', 'L', 'I', 'K'). Case-insensitive.</param>
-        /// <param name="assetId">Optional asset ID filter string. Supports '?', '_', '*', and '%' wildcards. Case-insensitive.</param>
-        /// <returns>An unexecuted <see cref="IQueryable{FilteredAssetRecord}"/> with applied filters.</returns>
         private IQueryable<FilteredAssetRecord> GetFilteredAssetQuery(string? managerType, string? assetId)
         {
             var baseQuery = from a in _context.Astmbs
@@ -161,13 +205,6 @@ namespace LegacyWebBridge.Controllers
             return baseQuery;
         }
 
-        /// <summary>
-        /// Executes the asset query against SQL Server, applying ordering, optional pagination, projection, and string trimming.
-        /// </summary>
-        /// <param name="baseQuery">Filtered asset query.</param>
-        /// <param name="skip">Number of records to skip for pagination (optional).</param>
-        /// <param name="take">Number of records to take for pagination (optional).</param>
-        /// <returns>A task that resolves to a list of populated <see cref="AssetDto"/> objects.</returns>
         private async Task<List<AssetDto>> FetchAssetDtosAsync(IQueryable<FilteredAssetRecord> baseQuery, int? skip = null, int? take = null)
         {
             IQueryable<FilteredAssetRecord> queryToFetch = baseQuery.OrderBy(x => x.Astmb.Mb001);
@@ -217,15 +254,6 @@ namespace LegacyWebBridge.Controllers
             }).ToList();
         }
 
-        /// <summary>
-        /// Endpoint: GET /assets or GET /api/assets
-        /// Retrieves a paginated list of assets and the total matching count.
-        /// </summary>
-        /// <param name="page">Page index (1-based, default: 1).</param>
-        /// <param name="pageSize">Number of records per page (default: 20).</param>
-        /// <param name="managerType">Filter by management category (optional, case-insensitive).</param>
-        /// <param name="assetId">Filter by asset ID with wildcard support ('?', '_', '*', '%', case-insensitive).</param>
-        /// <returns>JSON object with data array and total count.</returns>
         [HttpGet("assets")]
         [HttpGet("api/assets")]
         public async Task<IActionResult> GetAssets(
@@ -250,13 +278,6 @@ namespace LegacyWebBridge.Controllers
             });
         }
 
-        /// <summary>
-        /// Endpoint: GET /export or GET /api/export
-        /// Exports all matching asset records to an Excel file (.xlsx) based on query parameters.
-        /// </summary>
-        /// <param name="managerType">Filter by management category (optional, case-insensitive).</param>
-        /// <param name="assetId">Filter by asset ID with wildcard support ('?', '_', '*', '%', case-insensitive).</param>
-        /// <returns>Spreadsheet document stream with Excel content type and attachment disposition.</returns>
         [HttpGet("export")]
         [HttpGet("api/export")]
         public async Task<IActionResult> Export(
@@ -305,6 +326,250 @@ namespace LegacyWebBridge.Controllers
                 content,
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 "assets.xlsx");
+        }
+
+        [HttpGet("api/bookmarks")]
+        public IActionResult GetBookmarks()
+        {
+            var bookmarks = _settingsService.GetBookmarkedCustodians();
+            return Ok(bookmarks.ToList());
+        }
+
+        [HttpPost("api/bookmarks/toggle")]
+        public IActionResult ToggleBookmark([FromBody] ToggleBookmarkRequest req)
+        {
+            if (string.IsNullOrWhiteSpace(req?.CustodianCode))
+            {
+                return BadRequest("Custodian code cannot be empty.");
+            }
+            bool isBookmarked = _settingsService.ToggleCustodianBookmark(req.CustodianCode);
+            var allBookmarks = _settingsService.GetBookmarkedCustodians();
+            return Ok(new
+            {
+                custodianCode = req.CustodianCode.Trim(),
+                isBookmarked,
+                bookmarks = allBookmarks.ToList()
+            });
+        }
+
+        [HttpGet("api/custodians")]
+        public async Task<IActionResult> GetCustodians([FromQuery] string? q = null, [FromQuery] string? deptCode = null)
+        {
+            var bookmarks = _settingsService.GetBookmarkedCustodians();
+            q = q?.Trim();
+            deptCode = deptCode?.Trim();
+
+            List<CustodianDto> results = new();
+
+            if (!string.IsNullOrEmpty(q))
+            {
+                bool hasWildcards = q.Contains('?') || q.Contains('_') || q.Contains('*') || q.Contains('%');
+                string pattern = (hasWildcards
+                    ? q.Replace('?', '_').Replace('*', '%')
+                    : $"%{q}%").ToLower();
+
+                var matchingQuery = from d in _context.Cmsmvs
+                                    join c in _context.Cmsmes on d.Mv004 equals c.Me001 into dc
+                                    from c in dc.DefaultIfEmpty()
+                                    where EF.Functions.Like(d.Mv001.Trim().ToLower(), pattern) ||
+                                          (d.Mv002 != null && EF.Functions.Like(d.Mv002.Trim().ToLower(), pattern))
+                                    select new { d, c };
+
+                var matches = await matchingQuery.OrderBy(x => x.d.Mv001).Take(20).ToListAsync();
+
+                foreach (var item in matches)
+                {
+                    results.Add(new CustodianDto
+                    {
+                        保管人 = item.d.Mv001?.Trim() ?? "",
+                        姓名 = item.d.Mv002?.Trim() ?? "",
+                        保管代號 = item.d.Mv004?.Trim() ?? "",
+                        保管人部門 = item.c?.Me002?.Trim() ?? "",
+                        IsBookmarked = bookmarks.Contains(item.d.Mv001?.Trim() ?? "")
+                    });
+                }
+
+                if (results.Count <= 1)
+                {
+                    string cleanTerm = q.Replace("*", "").Replace("%", "").Replace("?", "").Replace("_", "").Trim();
+                    var fallbackQuery = from d in _context.Cmsmvs
+                                        join c in _context.Cmsmes on d.Mv004 equals c.Me001 into dc
+                                        from c in dc.DefaultIfEmpty()
+                                        where d.Mv001.Trim().CompareTo(cleanTerm) >= 0
+                                        orderby d.Mv001
+                                        select new { d, c };
+
+                    var extraList = await fallbackQuery.Take(10).ToListAsync();
+
+                    foreach (var item in extraList)
+                    {
+                        string code = item.d.Mv001?.Trim() ?? "";
+                        if (!results.Any(r => r.保管人.Equals(code, StringComparison.OrdinalIgnoreCase)))
+                        {
+                            results.Add(new CustodianDto
+                            {
+                                保管人 = code,
+                                姓名 = item.d.Mv002?.Trim() ?? "",
+                                保管代號 = item.d.Mv004?.Trim() ?? "",
+                                保管人部門 = item.c?.Me002?.Trim() ?? "",
+                                IsBookmarked = bookmarks.Contains(code)
+                            });
+                        }
+                    }
+                }
+            }
+            else
+            {
+                if (!string.IsNullOrEmpty(deptCode))
+                {
+                    var deptMatchesQuery = from d in _context.Cmsmvs
+                                            join c in _context.Cmsmes on d.Mv004 equals c.Me001 into dc
+                                            from c in dc.DefaultIfEmpty()
+                                            where d.Mv004 != null && d.Mv004.Trim() == deptCode
+                                            orderby d.Mv001
+                                            select new { d, c };
+
+                    var deptItems = await deptMatchesQuery.Take(10).ToListAsync();
+                    if (deptItems.Count > 0)
+                    {
+                        foreach (var item in deptItems)
+                        {
+                            string code = item.d.Mv001?.Trim() ?? "";
+                            results.Add(new CustodianDto
+                            {
+                                保管人 = code,
+                                姓名 = item.d.Mv002?.Trim() ?? "",
+                                保管代號 = item.d.Mv004?.Trim() ?? "",
+                                保管人部門 = item.c?.Me002?.Trim() ?? "",
+                                IsBookmarked = bookmarks.Contains(code)
+                            });
+                        }
+                    }
+                }
+
+                if (results.Count == 0)
+                {
+                    var defaultItemsQuery = from d in _context.Cmsmvs
+                                             join c in _context.Cmsmes on d.Mv004 equals c.Me001 into dc
+                                             from c in dc.DefaultIfEmpty()
+                                             orderby d.Mv001
+                                             select new { d, c };
+
+                    var defaultItems = await defaultItemsQuery.Take(10).ToListAsync();
+                    foreach (var item in defaultItems)
+                    {
+                        string code = item.d.Mv001?.Trim() ?? "";
+                        results.Add(new CustodianDto
+                        {
+                            保管人 = code,
+                            姓名 = item.d.Mv002?.Trim() ?? "",
+                            保管代號 = item.d.Mv004?.Trim() ?? "",
+                            保管人部門 = item.c?.Me002?.Trim() ?? "",
+                            IsBookmarked = bookmarks.Contains(code)
+                        });
+                    }
+                }
+            }
+
+            var sortedResults = results
+                .OrderByDescending(r => r.IsBookmarked)
+                .ThenBy(r => r.保管人)
+                .ToList();
+
+            return Ok(sortedResults);
+        }
+
+        [HttpGet("api/custodians/details/{code}")]
+        public async Task<IActionResult> GetCustodianDetail(string code)
+        {
+            if (string.IsNullOrWhiteSpace(code)) return NotFound();
+
+            string cleanCode = code.Trim();
+            var item = await (from d in _context.Cmsmvs
+                              join c in _context.Cmsmes on d.Mv004 equals c.Me001 into dc
+                              from c in dc.DefaultIfEmpty()
+                              where d.Mv001.Trim() == cleanCode
+                              select new CustodianDto
+                              {
+                                  保管人 = d.Mv001.Trim(),
+                                  姓名 = d.Mv002 != null ? d.Mv002.Trim() : "",
+                                  保管代號 = d.Mv004 != null ? d.Mv004.Trim() : "",
+                                  保管人部門 = c != null && c.Me002 != null ? c.Me002.Trim() : ""
+                              }).FirstOrDefaultAsync();
+
+            if (item == null)
+            {
+                return NotFound(new { message = "Custodian not found" });
+            }
+
+            return Ok(item);
+        }
+
+        [HttpGet("api/departments")]
+        public async Task<IActionResult> GetDepartments([FromQuery] string? q = null)
+        {
+            q = q?.Trim();
+            IQueryable<Cmsme> query = _context.Cmsmes;
+
+            if (!string.IsNullOrEmpty(q))
+            {
+                bool hasWildcards = q.Contains('?') || q.Contains('_') || q.Contains('*') || q.Contains('%');
+                string pattern = (hasWildcards
+                    ? q.Replace('?', '_').Replace('*', '%')
+                    : $"%{q}%").ToLower();
+
+                query = query.Where(c => EF.Functions.Like(c.Me001.Trim().ToLower(), pattern) ||
+                                         (c.Me002 != null && EF.Functions.Like(c.Me002.Trim().ToLower(), pattern)));
+            }
+
+            var items = await query.OrderBy(c => c.Me001).Take(20).ToListAsync();
+
+            var dtos = items.Select(c => new DepartmentDto
+            {
+                保管代號 = c.Me001.Trim(),
+                保管人部門 = c.Me002?.Trim() ?? ""
+            }).ToList();
+
+            return Ok(dtos);
+        }
+
+        [HttpPut("assets/{id}")]
+        [HttpPut("api/assets/{id}")]
+        public async Task<IActionResult> UpdateAsset(string id, [FromBody] EditAssetRequest req)
+        {
+            if (string.IsNullOrWhiteSpace(id)) return BadRequest("Asset ID is required.");
+
+            string assetId = id.Trim();
+            string custodianCode = req.保管人?.Trim() ?? "";
+            string deptCode = req.保管代號?.Trim() ?? "";
+
+            // Validation 1: 保管人 must match values from database (CMSMV)
+            bool custodianValid = await _context.Cmsmvs.AnyAsync(x => x.Mv001.Trim() == custodianCode);
+            if (!custodianValid)
+            {
+                return BadRequest(new { message = $"保管人 ({custodianCode}) 在資料庫中不存在" });
+            }
+
+            // Validation 2: 保管代號 must match values from database (CMSME)
+            bool deptValid = await _context.Cmsmes.AnyAsync(x => x.Me001.Trim() == deptCode);
+            if (!deptValid)
+            {
+                return BadRequest(new { message = $"保管代號 ({deptCode}) 在資料庫中不存在" });
+            }
+
+            string location = req.放置地點?.Trim() ?? "";
+            string remark = req.備註?.Trim() ?? "";
+
+            // Write ONLY the minimum changes (MC002, MC003, MC005, MC006 in ASTMC table)
+            int rowsAffected = await _context.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE ASTMC SET MC002 = {deptCode}, MC003 = {custodianCode}, MC005 = {remark}, MC006 = {location} WHERE TRIM(MC001) = {assetId}");
+
+            if (rowsAffected == 0)
+            {
+                return NotFound(new { message = $"找不到資產編號 ({assetId}) 的保管記錄" });
+            }
+
+            return Ok(new { success = true, message = "更新成功" });
         }
     }
 }

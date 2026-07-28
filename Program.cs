@@ -11,6 +11,8 @@ builder.WebHost.UseUrls($"http://0.0.0.0:{httpPort}");
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+builder.Services.AddSingleton<LegacyWebBridge.Services.IniSettingsService>();
+
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
