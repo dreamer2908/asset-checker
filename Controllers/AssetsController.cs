@@ -108,6 +108,9 @@ namespace LegacyWebBridge.Controllers
 
         [JsonPropertyName("保管人部門")]
         public string 保管人部門 { get; set; } = string.Empty;
+
+        [JsonPropertyName("isBookmarked")]
+        public bool IsBookmarked { get; set; }
     }
 
     /// <summary>
@@ -137,9 +140,6 @@ namespace LegacyWebBridge.Controllers
         public string 備註 { get; set; } = string.Empty;
     }
 
-    /// <summary>
-    /// Internal projection container wrapping joined entity records from ASTMB, ASTMC, CMSME, and CMSMV.
-    /// </summary>
     internal class FilteredAssetRecord
     {
         public Astmb Astmb { get; set; } = null!;
@@ -148,9 +148,6 @@ namespace LegacyWebBridge.Controllers
         public Cmsmv? Cmsmv { get; set; }
     }
 
-    /// <summary>
-    /// ASP.NET Core API controller serving asset queries, custodian/department search, bookmarks, and edit endpoints.
-    /// </summary>
     [ApiController]
     public class AssetsController : ControllerBase
     {
@@ -352,14 +349,71 @@ namespace LegacyWebBridge.Controllers
             });
         }
 
-        [HttpGet("api/custodians")]
-        public async Task<IActionResult> GetCustodians([FromQuery] string? q = null, [FromQuery] string? deptCode = null)
+        [HttpGet("api/bookmarks/departments")]
+        public IActionResult GetDepartmentBookmarks()
         {
+            var bookmarks = _settingsService.GetBookmarkedDepartments();
+            return Ok(bookmarks.ToList());
+        }
+
+        [HttpPost("api/bookmarks/toggle-dept")]
+        public IActionResult ToggleDepartmentBookmark([FromBody] ToggleBookmarkRequest req)
+        {
+            if (string.IsNullOrWhiteSpace(req?.CustodianCode))
+            {
+                return BadRequest("Department code cannot be empty.");
+            }
+            bool isBookmarked = _settingsService.ToggleDepartmentBookmark(req.CustodianCode);
+            var allBookmarks = _settingsService.GetBookmarkedDepartments();
+            return Ok(new
+            {
+                departmentCode = req.CustodianCode.Trim(),
+                isBookmarked,
+                bookmarks = allBookmarks.ToList()
+            });
+        }
+
+        [HttpGet("api/custodians")]
+        public async Task<IActionResult> GetCustodians(
+            [FromQuery] string? q = null,
+            [FromQuery] string? deptCode = null,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20)
+        {
+            if (page < 1) page = 1;
+            if (pageSize < 1) pageSize = 20;
+
             var bookmarks = _settingsService.GetBookmarkedCustodians();
             q = q?.Trim();
             deptCode = deptCode?.Trim();
 
-            List<CustodianDto> results = new();
+            List<CustodianDto> responseList = new();
+
+            // Always fetch ALL bookmarked custodians on page 1 and pin them to top regardless of search query
+            if (page == 1 && bookmarks.Count > 0)
+            {
+                var bookmarkedList = await (from d in _context.Cmsmvs
+                                            join c in _context.Cmsmes on d.Mv004 equals c.Me001 into dc
+                                            from c in dc.DefaultIfEmpty()
+                                            where bookmarks.Contains(d.Mv001.Trim())
+                                            orderby d.Mv001
+                                            select new CustodianDto
+                                            {
+                                                保管人 = d.Mv001.Trim(),
+                                                姓名 = d.Mv002 != null ? d.Mv002.Trim() : "",
+                                                保管代號 = d.Mv004 != null ? d.Mv004.Trim() : "",
+                                                保管人部門 = c != null && c.Me002 != null ? c.Me002.Trim() : "",
+                                                IsBookmarked = true
+                                            }).ToListAsync();
+
+                responseList.AddRange(bookmarkedList);
+            }
+
+            // Query matching database custodians
+            var baseQuery = from d in _context.Cmsmvs
+                            join c in _context.Cmsmes on d.Mv004 equals c.Me001 into dc
+                            from c in dc.DefaultIfEmpty()
+                            select new { d, c };
 
             if (!string.IsNullOrEmpty(q))
             {
@@ -368,98 +422,43 @@ namespace LegacyWebBridge.Controllers
                     ? q.Replace('?', '_').Replace('*', '%')
                     : $"%{q}%").ToLower();
 
-                var matchingQuery = from d in _context.Cmsmvs
-                                    join c in _context.Cmsmes on d.Mv004 equals c.Me001 into dc
-                                    from c in dc.DefaultIfEmpty()
-                                    where EF.Functions.Like(d.Mv001.Trim().ToLower(), pattern) ||
-                                          (d.Mv002 != null && EF.Functions.Like(d.Mv002.Trim().ToLower(), pattern))
-                                    select new { d, c };
-
-                var matches = await matchingQuery.OrderBy(x => x.d.Mv001).Take(20).ToListAsync();
-
-                foreach (var item in matches)
-                {
-                    results.Add(new CustodianDto
-                    {
-                        保管人 = item.d.Mv001?.Trim() ?? "",
-                        姓名 = item.d.Mv002?.Trim() ?? "",
-                        保管代號 = item.d.Mv004?.Trim() ?? "",
-                        保管人部門 = item.c?.Me002?.Trim() ?? "",
-                        IsBookmarked = bookmarks.Contains(item.d.Mv001?.Trim() ?? "")
-                    });
-                }
-
-                if (results.Count <= 1)
-                {
-                    string cleanTerm = q.Replace("*", "").Replace("%", "").Replace("?", "").Replace("_", "").Trim();
-                    var fallbackQuery = from d in _context.Cmsmvs
-                                        join c in _context.Cmsmes on d.Mv004 equals c.Me001 into dc
-                                        from c in dc.DefaultIfEmpty()
-                                        where d.Mv001.Trim().CompareTo(cleanTerm) >= 0
-                                        orderby d.Mv001
-                                        select new { d, c };
-
-                    var extraList = await fallbackQuery.Take(10).ToListAsync();
-
-                    foreach (var item in extraList)
-                    {
-                        string code = item.d.Mv001?.Trim() ?? "";
-                        if (!results.Any(r => r.保管人.Equals(code, StringComparison.OrdinalIgnoreCase)))
-                        {
-                            results.Add(new CustodianDto
-                            {
-                                保管人 = code,
-                                姓名 = item.d.Mv002?.Trim() ?? "",
-                                保管代號 = item.d.Mv004?.Trim() ?? "",
-                                保管人部門 = item.c?.Me002?.Trim() ?? "",
-                                IsBookmarked = bookmarks.Contains(code)
-                            });
-                        }
-                    }
-                }
+                baseQuery = baseQuery.Where(x => EF.Functions.Like(x.d.Mv001.Trim().ToLower(), pattern) ||
+                                                 (x.d.Mv002 != null && EF.Functions.Like(x.d.Mv002.Trim().ToLower(), pattern)));
             }
-            else
+            else if (!string.IsNullOrEmpty(deptCode))
             {
-                if (!string.IsNullOrEmpty(deptCode))
+                baseQuery = baseQuery.Where(x => x.d.Mv004 != null && x.d.Mv004.Trim() == deptCode);
+            }
+
+            int offset = (page - 1) * pageSize;
+            var pageItems = await baseQuery.OrderBy(x => x.d.Mv001).Skip(offset).Take(pageSize).ToListAsync();
+
+            List<CustodianDto> searchDtos = pageItems.Select(item => new CustodianDto
+            {
+                保管人 = item.d.Mv001?.Trim() ?? "",
+                姓名 = item.d.Mv002?.Trim() ?? "",
+                保管代號 = item.d.Mv004?.Trim() ?? "",
+                保管人部門 = item.c?.Me002?.Trim() ?? "",
+                IsBookmarked = bookmarks.Contains(item.d.Mv001?.Trim() ?? "")
+            }).ToList();
+
+            // Fallback rule if search results on page 1 are <= 1
+            if (page == 1 && searchDtos.Count <= 1 && !string.IsNullOrEmpty(q))
+            {
+                string cleanTerm = q.Replace("*", "").Replace("%", "").Replace("?", "").Replace("_", "").Trim();
+                var fallbackItems = await (from d in _context.Cmsmvs
+                                           join c in _context.Cmsmes on d.Mv004 equals c.Me001 into dc
+                                           from c in dc.DefaultIfEmpty()
+                                           where d.Mv001.Trim().CompareTo(cleanTerm) >= 0
+                                           orderby d.Mv001
+                                           select new { d, c }).Take(10).ToListAsync();
+
+                foreach (var item in fallbackItems)
                 {
-                    var deptMatchesQuery = from d in _context.Cmsmvs
-                                            join c in _context.Cmsmes on d.Mv004 equals c.Me001 into dc
-                                            from c in dc.DefaultIfEmpty()
-                                            where d.Mv004 != null && d.Mv004.Trim() == deptCode
-                                            orderby d.Mv001
-                                            select new { d, c };
-
-                    var deptItems = await deptMatchesQuery.Take(10).ToListAsync();
-                    if (deptItems.Count > 0)
+                    string code = item.d.Mv001?.Trim() ?? "";
+                    if (!searchDtos.Any(s => s.保管人.Equals(code, StringComparison.OrdinalIgnoreCase)))
                     {
-                        foreach (var item in deptItems)
-                        {
-                            string code = item.d.Mv001?.Trim() ?? "";
-                            results.Add(new CustodianDto
-                            {
-                                保管人 = code,
-                                姓名 = item.d.Mv002?.Trim() ?? "",
-                                保管代號 = item.d.Mv004?.Trim() ?? "",
-                                保管人部門 = item.c?.Me002?.Trim() ?? "",
-                                IsBookmarked = bookmarks.Contains(code)
-                            });
-                        }
-                    }
-                }
-
-                if (results.Count == 0)
-                {
-                    var defaultItemsQuery = from d in _context.Cmsmvs
-                                             join c in _context.Cmsmes on d.Mv004 equals c.Me001 into dc
-                                             from c in dc.DefaultIfEmpty()
-                                             orderby d.Mv001
-                                             select new { d, c };
-
-                    var defaultItems = await defaultItemsQuery.Take(10).ToListAsync();
-                    foreach (var item in defaultItems)
-                    {
-                        string code = item.d.Mv001?.Trim() ?? "";
-                        results.Add(new CustodianDto
+                        searchDtos.Add(new CustodianDto
                         {
                             保管人 = code,
                             姓名 = item.d.Mv002?.Trim() ?? "",
@@ -471,12 +470,16 @@ namespace LegacyWebBridge.Controllers
                 }
             }
 
-            var sortedResults = results
-                .OrderByDescending(r => r.IsBookmarked)
-                .ThenBy(r => r.保管人)
-                .ToList();
+            // Append searchDtos to responseList, ensuring no duplicate custodian codes
+            foreach (var item in searchDtos)
+            {
+                if (!responseList.Any(r => r.保管人.Equals(item.保管人, StringComparison.OrdinalIgnoreCase)))
+                {
+                    responseList.Add(item);
+                }
+            }
 
-            return Ok(sortedResults);
+            return Ok(responseList);
         }
 
         [HttpGet("api/custodians/details/{code}")]
@@ -506,9 +509,35 @@ namespace LegacyWebBridge.Controllers
         }
 
         [HttpGet("api/departments")]
-        public async Task<IActionResult> GetDepartments([FromQuery] string? q = null)
+        public async Task<IActionResult> GetDepartments(
+            [FromQuery] string? q = null,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20)
         {
+            if (page < 1) page = 1;
+            if (pageSize < 1) pageSize = 20;
+
+            var bookmarks = _settingsService.GetBookmarkedDepartments();
             q = q?.Trim();
+
+            List<DepartmentDto> responseList = new();
+
+            // Always fetch ALL bookmarked departments on page 1 and pin to top
+            if (page == 1 && bookmarks.Count > 0)
+            {
+                var bookmarkedDepts = await _context.Cmsmes
+                    .Where(c => bookmarks.Contains(c.Me001.Trim()))
+                    .OrderBy(c => c.Me001)
+                    .Select(c => new DepartmentDto
+                    {
+                        保管代號 = c.Me001.Trim(),
+                        保管人部門 = c.Me002 != null ? c.Me002.Trim() : "",
+                        IsBookmarked = true
+                    }).ToListAsync();
+
+                responseList.AddRange(bookmarkedDepts);
+            }
+
             IQueryable<Cmsme> query = _context.Cmsmes;
 
             if (!string.IsNullOrEmpty(q))
@@ -522,15 +551,25 @@ namespace LegacyWebBridge.Controllers
                                          (c.Me002 != null && EF.Functions.Like(c.Me002.Trim().ToLower(), pattern)));
             }
 
-            var items = await query.OrderBy(c => c.Me001).Take(20).ToListAsync();
+            int offset = (page - 1) * pageSize;
+            var pageItems = await query.OrderBy(c => c.Me001).Skip(offset).Take(pageSize).ToListAsync();
 
-            var dtos = items.Select(c => new DepartmentDto
+            var searchDtos = pageItems.Select(c => new DepartmentDto
             {
                 保管代號 = c.Me001.Trim(),
-                保管人部門 = c.Me002?.Trim() ?? ""
+                保管人部門 = c.Me002?.Trim() ?? "",
+                IsBookmarked = bookmarks.Contains(c.Me001.Trim())
             }).ToList();
 
-            return Ok(dtos);
+            foreach (var item in searchDtos)
+            {
+                if (!responseList.Any(r => r.保管代號.Equals(item.保管代號, StringComparison.OrdinalIgnoreCase)))
+                {
+                    responseList.Add(item);
+                }
+            }
+
+            return Ok(responseList);
         }
 
         [HttpPut("assets/{id}")]

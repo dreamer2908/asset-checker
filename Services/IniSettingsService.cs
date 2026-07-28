@@ -6,17 +6,13 @@ using System.Linq;
 namespace LegacyWebBridge.Services
 {
     /// <summary>
-    /// Service responsible for managing application settings and custodian bookmarks persisted in an .ini file on disk.
+    /// Service responsible for managing application settings, custodian bookmarks, and department bookmarks persisted in an .ini file on disk.
     /// </summary>
     public class IniSettingsService
     {
         private readonly string _filePath;
         private readonly object _lock = new();
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="IniSettingsService"/> class.
-        /// </summary>
-        /// <param name="environment">Host environment providing the content root path.</param>
         public IniSettingsService(IWebHostEnvironment environment)
         {
             _filePath = Path.Combine(environment.ContentRootPath, "bookmarks.ini");
@@ -29,16 +25,22 @@ namespace LegacyWebBridge.Services
             {
                 if (!File.Exists(_filePath))
                 {
-                    File.WriteAllText(_filePath, "[Bookmarks]\nCustodians=\n");
+                    File.WriteAllText(_filePath, "[Bookmarks]\nCustodians=\nDepartments=\n");
                 }
             }
         }
 
-        /// <summary>
-        /// Retrieves the list of bookmarked custodian codes from the .ini file.
-        /// </summary>
-        /// <returns>A HashSet of trimmed custodian code strings.</returns>
         public HashSet<string> GetBookmarkedCustodians()
+        {
+            return GetKeyValues("Custodians=");
+        }
+
+        public HashSet<string> GetBookmarkedDepartments()
+        {
+            return GetKeyValues("Departments=");
+        }
+
+        private HashSet<string> GetKeyValues(string keyPrefix)
         {
             lock (_lock)
             {
@@ -48,15 +50,15 @@ namespace LegacyWebBridge.Services
                 }
 
                 string[] lines = File.ReadAllLines(_filePath);
-                string? custodiansLine = lines
-                    .FirstOrDefault(l => l.StartsWith("Custodians=", StringComparison.OrdinalIgnoreCase));
+                string? line = lines
+                    .FirstOrDefault(l => l.StartsWith(keyPrefix, StringComparison.OrdinalIgnoreCase));
 
-                if (string.IsNullOrWhiteSpace(custodiansLine))
+                if (string.IsNullOrWhiteSpace(line))
                 {
                     return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 }
 
-                string value = custodiansLine.Substring("Custodians=".Length).Trim();
+                string value = line.Substring(keyPrefix.Length).Trim();
                 if (string.IsNullOrWhiteSpace(value))
                 {
                     return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -67,33 +69,38 @@ namespace LegacyWebBridge.Services
             }
         }
 
-        /// <summary>
-        /// Toggles a custodian code in the bookmarked list in the .ini file.
-        /// </summary>
-        /// <param name="code">Custodian code to toggle.</param>
-        /// <returns>True if the custodian code is now bookmarked; false otherwise.</returns>
         public bool ToggleCustodianBookmark(string code)
+        {
+            return ToggleKeyValue("Custodians=", code);
+        }
+
+        public bool ToggleDepartmentBookmark(string code)
+        {
+            return ToggleKeyValue("Departments=", code);
+        }
+
+        private bool ToggleKeyValue(string keyPrefix, string code)
         {
             if (string.IsNullOrWhiteSpace(code)) return false;
             code = code.Trim();
 
             lock (_lock)
             {
-                var bookmarks = GetBookmarkedCustodians();
+                var set = GetKeyValues(keyPrefix);
                 bool isNowBookmarked;
 
-                if (bookmarks.Contains(code))
+                if (set.Contains(code))
                 {
-                    bookmarks.Remove(code);
+                    set.Remove(code);
                     isNowBookmarked = false;
                 }
                 else
                 {
-                    bookmarks.Add(code);
+                    set.Add(code);
                     isNowBookmarked = true;
                 }
 
-                string newCustodiansLine = "Custodians=" + string.Join(",", bookmarks);
+                string newLineContent = keyPrefix + string.Join(",", set);
 
                 string[] lines = File.Exists(_filePath) ? File.ReadAllLines(_filePath) : Array.Empty<string>();
                 List<string> newLines = new();
@@ -110,9 +117,9 @@ namespace LegacyWebBridge.Services
                         continue;
                     }
 
-                    if (sectionFound && trimmed.StartsWith("Custodians=", StringComparison.OrdinalIgnoreCase))
+                    if (sectionFound && trimmed.StartsWith(keyPrefix, StringComparison.OrdinalIgnoreCase))
                     {
-                        newLines.Add(newCustodiansLine);
+                        newLines.Add(newLineContent);
                         keyFound = true;
                         continue;
                     }
@@ -123,11 +130,11 @@ namespace LegacyWebBridge.Services
                 if (!sectionFound)
                 {
                     newLines.Add("[Bookmarks]");
-                    newLines.Add(newCustodiansLine);
+                    newLines.Add(newLineContent);
                 }
                 else if (!keyFound)
                 {
-                    newLines.Add(newCustodiansLine);
+                    newLines.Add(newLineContent);
                 }
 
                 File.WriteAllLines(_filePath, newLines);
