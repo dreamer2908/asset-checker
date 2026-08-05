@@ -1,4 +1,4 @@
-using LegacyWebBridge.Models;
+using AssetChecker.Models;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -11,7 +11,7 @@ builder.WebHost.UseUrls($"http://0.0.0.0:{httpPort}");
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-builder.Services.AddSingleton<LegacyWebBridge.Services.IniSettingsService>();
+builder.Services.AddSingleton<AssetChecker.Services.IniSettingsService>();
 
 builder.Services.AddControllers()
     .AddJsonOptions(options =>

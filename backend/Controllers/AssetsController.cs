@@ -1,12 +1,12 @@
 using System.Data;
 using System.Text.Json.Serialization;
 using ClosedXML.Excel;
-using LegacyWebBridge.Models;
-using LegacyWebBridge.Services;
+using AssetChecker.Models;
+using AssetChecker.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
-namespace LegacyWebBridge.Controllers
+namespace AssetChecker.Controllers
 {
     /// <summary>
     /// Data Transfer Object representing an individual asset item for API responses and Excel export.

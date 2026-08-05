@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 
-namespace LegacyWebBridge.Models;
+namespace AssetChecker.Models;
 
 public partial class Astmb
 {

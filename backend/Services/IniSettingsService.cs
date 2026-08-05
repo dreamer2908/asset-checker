@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 
-namespace LegacyWebBridge.Services
+namespace AssetChecker.Services
 {
     /// <summary>
     /// Service responsible for managing application settings, custodian bookmarks, and department bookmarks persisted in an .ini file on disk.

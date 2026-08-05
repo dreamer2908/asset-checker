@@ -4,7 +4,7 @@ using System.IO;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 
-namespace LegacyWebBridge.Models;
+namespace AssetChecker.Models;
 
 public partial class AppDbContext : DbContext
 {
