@@ -1,0 +1,18 @@
+.navbar {
+    background-color: #fde9b8;
+    /* Màu nền, bạn có thể đổi */
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+.nav-logo {
+    display: flex;
+    align-items: center;
+}
+
+.logo-image {
+    height: 50px;
+    object-fit: contain;
+}
