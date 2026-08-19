@@ -625,7 +625,7 @@ namespace AssetChecker.Controllers
 
             // Write ONLY the minimum changes (MC002, MC003, MC005, MC006 in ASTMC table)
             int rowsAffected = await _context.Database.ExecuteSqlInterpolatedAsync(
-                $"UPDATE ASTMC SET MC002 = {deptCode}, MC003 = {custodianCode}, MC005 = {remark}, MC006 = {location} WHERE TRIM(MC001) = {assetId}");
+                $"UPDATE ASTMC SET MC002 = {deptCode}, MC003 = {custodianCode}, MC005 = {remark}, MC006 = {location} WHERE LTRIM(RTRIM(MC001)) = {assetId}");
 
             if (rowsAffected == 0)
             {
