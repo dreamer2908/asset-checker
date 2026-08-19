@@ -137,6 +137,19 @@ function App() {
                 setAssetId(e.target.value);
               }}
             />
+            {assetId && (
+              <button
+                className="btn btn-outline-secondary"
+                type="button"
+                title="清除資產編號"
+                onClick={() => {
+                  setAssetId('');
+                  setPage(1);
+                }}
+              >
+                ✕
+              </button>
+            )}
             {/* Hidden file input for QR scanning */}
             <input
               ref={qrInputRef}

@@ -33,11 +33,16 @@ function EditAssetModal({ asset, onClose, onSaved }) {
   const [isLoadingDepts, setIsLoadingDepts] = useState(false);
   const [showDeptDropdown, setShowDeptDropdown] = useState(false);
 
+  // Location bookmarks state
+  const [locationBookmarks, setLocationBookmarks] = useState([]);
+  const [showLocationDropdown, setShowLocationDropdown] = useState(false);
+
   const [errorMsg, setErrorMsg] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
   const custodianDropdownRef = useRef(null);
   const deptDropdownRef = useRef(null);
+  const locationDropdownRef = useRef(null);
 
   // Fetch custodian detail when 保管人 value changes
   const fetchCustodianDetail = async (code) => {
@@ -87,7 +92,6 @@ function EditAssetModal({ asset, onClose, onSaved }) {
         if (reset || pageNum === 1) {
           return newItems;
         }
-        // Filter out duplicate custodian entries
         const existingCodes = new Set(prev.map((item) => item.保管人));
         const filteredNew = newItems.filter((item) => !existingCodes.has(item.保管人));
         return [...prev, ...filteredNew];
@@ -128,6 +132,16 @@ function EditAssetModal({ asset, onClose, onSaved }) {
     }
   }, []);
 
+  // Fetch location bookmarks
+  const fetchLocationBookmarks = useCallback(async () => {
+    try {
+      const res = await axios.get('/api/bookmarks/locations');
+      setLocationBookmarks(res.data || []);
+    } catch (err) {
+      console.error('Error fetching location bookmarks:', err);
+    }
+  }, []);
+
   // Handle outside click to close dropdowns
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -137,22 +151,28 @@ function EditAssetModal({ asset, onClose, onSaved }) {
       if (deptDropdownRef.current && !deptDropdownRef.current.contains(e.target)) {
         setShowDeptDropdown(false);
       }
+      if (locationDropdownRef.current && !locationDropdownRef.current.contains(e.target)) {
+        setShowLocationDropdown(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Initial fetch for custodian dropdown
+  // Initial fetch for dropdowns
   useEffect(() => {
     setCustodianPage(1);
     fetchCustodians(custodianQuery, formData.保管代號, 1, true);
   }, [custodianQuery, formData.保管代號, fetchCustodians]);
 
-  // Initial fetch for department dropdown
   useEffect(() => {
     setDeptPage(1);
     fetchDepartments(deptQuery, 1, true);
   }, [deptQuery, fetchDepartments]);
+
+  useEffect(() => {
+    fetchLocationBookmarks();
+  }, [fetchLocationBookmarks]);
 
   // Lazy load custodians on scroll
   const handleCustodianScroll = (e) => {
@@ -218,6 +238,21 @@ function EditAssetModal({ asset, onClose, onSaved }) {
     } catch (err) {
       console.error('Error toggling department bookmark:', err);
     }
+  };
+
+  const toggleLocationBookmark = async (loc) => {
+    if (!loc || !loc.trim()) return;
+    try {
+      const res = await axios.post('/api/bookmarks/toggle-location', { custodianCode: loc.trim() });
+      setLocationBookmarks(res.data.bookmarks || []);
+    } catch (err) {
+      console.error('Error toggling location bookmark:', err);
+    }
+  };
+
+  const isLocationBookmarked = (loc) => {
+    if (!loc || !loc.trim()) return false;
+    return locationBookmarks.some((b) => b.toLowerCase() === loc.trim().toLowerCase());
   };
 
   // Handle Department input change
@@ -286,7 +321,7 @@ function EditAssetModal({ asset, onClose, onSaved }) {
             )}
 
             <div className="row g-3">
-              {/* Read-Only Fields */}
+              {/* Read-Only Fields Row 1 */}
               <div className="col-md-4">
                 <label className="form-label text-muted fw-bold">資產編號 (唯讀)</label>
                 <input type="text" className="form-control bg-light" value={formData.資產編號} readOnly />
@@ -302,7 +337,7 @@ function EditAssetModal({ asset, onClose, onSaved }) {
                 <input type="text" className="form-control bg-light" value={formData.資產規格} readOnly />
               </div>
 
-              {/* Editable Custodian with Search & Infinite Scroll */}
+              {/* Editable Custodian Row 2 */}
               <div className="col-md-4 position-relative" ref={custodianDropdownRef}>
                 <label className="form-label fw-bold text-primary">
                   保管人 <span className="text-danger">*</span>
@@ -319,6 +354,19 @@ function EditAssetModal({ asset, onClose, onSaved }) {
                       fetchCustodians(formData.保管人, formData.保管代號, 1, true);
                     }}
                   />
+                  {formData.保管人 && (
+                    <button
+                      className="btn btn-outline-secondary"
+                      type="button"
+                      title="清除保管人"
+                      onClick={() => {
+                        setFormData((prev) => ({ ...prev, 保管人: '', 姓名: '', 保管人部門: '' }));
+                        setCustodianQuery('');
+                      }}
+                    >
+                      ✕
+                    </button>
+                  )}
                   <button
                     className="btn btn-outline-secondary dropdown-toggle"
                     type="button"
@@ -329,7 +377,7 @@ function EditAssetModal({ asset, onClose, onSaved }) {
                   ></button>
                 </div>
 
-                {/* Custodian Dropdown List with Lazy Load Scroll */}
+                {/* Custodian Dropdown List */}
                 {showCustodianDropdown && (
                   <div
                     className="dropdown-menu show w-100 shadow-sm"
@@ -384,7 +432,7 @@ function EditAssetModal({ asset, onClose, onSaved }) {
                 <input type="text" className="form-control bg-light" value={formData.姓名} readOnly />
               </div>
 
-              {/* Editable Department Code with Search & Bookmark & Infinite Scroll */}
+              {/* Editable Department Code */}
               <div className="col-md-4 position-relative" ref={deptDropdownRef}>
                 <label className="form-label fw-bold text-primary">
                   保管代號 <span className="text-danger">*</span>
@@ -401,6 +449,19 @@ function EditAssetModal({ asset, onClose, onSaved }) {
                       fetchDepartments(formData.保管代號, 1, true);
                     }}
                   />
+                  {formData.保管代號 && (
+                    <button
+                      className="btn btn-outline-secondary"
+                      type="button"
+                      title="清除保管代號"
+                      onClick={() => {
+                        setFormData((prev) => ({ ...prev, 保管代號: '' }));
+                        setDeptQuery('');
+                      }}
+                    >
+                      ✕
+                    </button>
+                  )}
                   <button
                     className="btn btn-outline-secondary dropdown-toggle"
                     type="button"
@@ -411,7 +472,7 @@ function EditAssetModal({ asset, onClose, onSaved }) {
                   ></button>
                 </div>
 
-                {/* Department Dropdown List with Lazy Load Scroll */}
+                {/* Department Dropdown List */}
                 {showDeptDropdown && (
                   <div
                     className="dropdown-menu show w-100 shadow-sm"
@@ -459,25 +520,99 @@ function EditAssetModal({ asset, onClose, onSaved }) {
                 )}
               </div>
 
-              {/* Read-Only Department Name */}
+              {/* Read-Only Department Name Row 3 (col-md-4) */}
               <div className="col-md-4">
                 <label className="form-label text-muted fw-bold">保管人部門 (唯讀)</label>
                 <input type="text" className="form-control bg-light" value={formData.保管人部門} readOnly />
               </div>
 
-              {/* Editable Location */}
-              <div className="col-md-4">
+              {/* Editable Location Row 3 (Spans 2 columns: col-md-8) */}
+              <div className="col-md-8 position-relative" ref={locationDropdownRef}>
                 <label className="form-label fw-bold text-primary">放置地點</label>
-                <input
-                  type="text"
-                  className="form-control"
-                  placeholder="輸入放置地點"
-                  value={formData.放置地點}
-                  onChange={(e) => setFormData({ ...formData, 放置地點: e.target.value })}
-                />
+                <div className="input-group">
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="輸入或選擇放置地點"
+                    value={formData.放置地點}
+                    onChange={(e) => setFormData({ ...formData, 放置地點: e.target.value })}
+                    onFocus={() => setShowLocationDropdown(true)}
+                  />
+                  {formData.放置地點 && (
+                    <button
+                      className="btn btn-outline-secondary"
+                      type="button"
+                      title="清除放置地點"
+                      onClick={() => setFormData({ ...formData, 放置地點: '' })}
+                    >
+                      ✕
+                    </button>
+                  )}
+                  {formData.放置地點.trim() && (
+                    <button
+                      className={`btn ${isLocationBookmarked(formData.放置地點) ? 'btn-warning text-dark' : 'btn-outline-secondary'}`}
+                      type="button"
+                      title={isLocationBookmarked(formData.放置地點) ? '取消放置地點書籤' : '加入放置地點書籤'}
+                      onClick={() => toggleLocationBookmark(formData.放置地點)}
+                    >
+                      {isLocationBookmarked(formData.放置地點) ? '★' : '☆'}
+                    </button>
+                  )}
+                  <button
+                    className="btn btn-outline-secondary dropdown-toggle"
+                    type="button"
+                    title="常用放置地點選單"
+                    onClick={() => setShowLocationDropdown(!showLocationDropdown)}
+                  ></button>
+                </div>
+
+                {/* Location Bookmarks Dropdown */}
+                {showLocationDropdown && (
+                  <div
+                    className="dropdown-menu show w-100 shadow-sm"
+                    style={{
+                      maxHeight: '240px',
+                      overflowY: 'auto',
+                      position: 'absolute',
+                      zIndex: 1050,
+                      top: '100%',
+                    }}
+                  >
+                    <div className="dropdown-header fw-bold text-dark border-bottom py-1">常用放置地點書籤</div>
+                    {locationBookmarks.length === 0 ? (
+                      <div className="dropdown-item text-muted small py-2">尚無放置地點書籤</div>
+                    ) : (
+                      locationBookmarks.map((loc, i) => (
+                        <div
+                          key={i}
+                          className="dropdown-item d-flex justify-content-between align-items-center py-2"
+                          style={{ cursor: 'pointer' }}
+                          onClick={() => {
+                            setFormData((prev) => ({ ...prev, 放置地點: loc }));
+                            setShowLocationDropdown(false);
+                          }}
+                        >
+                          <span className="fw-bold me-2">{loc}</span>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-warning text-dark"
+                            style={{ padding: '0px 6px', fontSize: '12px' }}
+                            title="取消書籤"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleLocationBookmark(loc);
+                            }}
+                          >
+                            ★
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
 
-              {/* Read-Only Supplier Codes */}
+              {/* Read-Only Supplier Codes Row 4 */}
               <div className="col-md-4">
                 <label className="form-label text-muted fw-bold">供應廠商 (唯讀)</label>
                 <input type="text" className="form-control bg-light" value={formData.供應廠商} readOnly />
@@ -493,7 +628,7 @@ function EditAssetModal({ asset, onClose, onSaved }) {
                 <input type="text" className="form-control bg-light" value={formData.管理區分} readOnly />
               </div>
 
-              {/* Editable Remarks */}
+              {/* Editable Remarks Row 5 */}
               <div className="col-12">
                 <label className="form-label fw-bold text-primary">備註</label>
                 <textarea

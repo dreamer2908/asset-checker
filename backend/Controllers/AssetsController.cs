@@ -373,6 +373,30 @@ namespace AssetChecker.Controllers
             });
         }
 
+        [HttpGet("api/bookmarks/locations")]
+        public IActionResult GetLocationBookmarks()
+        {
+            var bookmarks = _settingsService.GetBookmarkedLocations();
+            return Ok(bookmarks.ToList());
+        }
+
+        [HttpPost("api/bookmarks/toggle-location")]
+        public IActionResult ToggleLocationBookmark([FromBody] ToggleBookmarkRequest req)
+        {
+            if (string.IsNullOrWhiteSpace(req?.CustodianCode))
+            {
+                return BadRequest("Location value cannot be empty.");
+            }
+            bool isBookmarked = _settingsService.ToggleLocationBookmark(req.CustodianCode);
+            var allBookmarks = _settingsService.GetBookmarkedLocations();
+            return Ok(new
+            {
+                location = req.CustodianCode.Trim(),
+                isBookmarked,
+                bookmarks = allBookmarks.ToList()
+            });
+        }
+
         [HttpGet("api/custodians")]
         public async Task<IActionResult> GetCustodians(
             [FromQuery] string? q = null,

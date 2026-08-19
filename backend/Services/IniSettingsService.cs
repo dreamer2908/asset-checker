@@ -6,7 +6,7 @@ using System.Linq;
 namespace AssetChecker.Services
 {
     /// <summary>
-    /// Service responsible for managing application settings, custodian bookmarks, and department bookmarks persisted in an .ini file on disk.
+    /// Service responsible for managing application settings, custodian bookmarks, department bookmarks, and location bookmarks persisted in an .ini file on disk.
     /// </summary>
     public class IniSettingsService
     {
@@ -25,7 +25,7 @@ namespace AssetChecker.Services
             {
                 if (!File.Exists(_filePath))
                 {
-                    File.WriteAllText(_filePath, "[Bookmarks]\nCustodians=\nDepartments=\n");
+                    File.WriteAllText(_filePath, "[Bookmarks]\nCustodians=\nDepartments=\nLocations=\n");
                 }
             }
         }
@@ -38,6 +38,11 @@ namespace AssetChecker.Services
         public HashSet<string> GetBookmarkedDepartments()
         {
             return GetKeyValues("Departments=");
+        }
+
+        public HashSet<string> GetBookmarkedLocations()
+        {
+            return GetKeyValues("Locations=");
         }
 
         private HashSet<string> GetKeyValues(string keyPrefix)
@@ -77,6 +82,11 @@ namespace AssetChecker.Services
         public bool ToggleDepartmentBookmark(string code)
         {
             return ToggleKeyValue("Departments=", code);
+        }
+
+        public bool ToggleLocationBookmark(string location)
+        {
+            return ToggleKeyValue("Locations=", location);
         }
 
         private bool ToggleKeyValue(string keyPrefix, string code)
