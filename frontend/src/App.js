@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
+import jsQR from 'jsqr';
 import EditAssetModal from './EditAssetModal';
 
 function App() {
@@ -11,6 +12,59 @@ function App() {
   const [assetId, setAssetId] = useState('');
 
   const [editingAsset, setEditingAsset] = useState(null);
+  const [qrStatus, setQrStatus] = useState(''); // '', 'scanning', 'ok', 'error'
+  const qrInputRef = useRef(null);
+
+  // Extract 14-char 資產編號 from QR payload.
+  // Format: <letter><2-digit-year>-<1 or 2><letter><3-digit>-<4-digit>
+  // e.g. V19-2C101-0087, K18-2C101-0002
+  const extractAssetId = (qrData) => {
+    const match = qrData.match(/[A-Z]\d{2}-[12][A-Z]\d{3}-\d{4}/);
+    return match ? match[0] : null;
+  };
+
+  const handleQrFile = (e) => {
+    const file = e.target.files[0];
+    // Reset value so the same file can be chosen again next time
+    e.target.value = '';
+    if (!file) return;
+
+    setQrStatus('scanning');
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(imageData.data, imageData.width, imageData.height);
+        if (!code) {
+          setQrStatus('error');
+          setTimeout(() => setQrStatus(''), 3000);
+          return;
+        }
+        const assetIdFound = extractAssetId(code.data);
+        if (!assetIdFound) {
+          setQrStatus('error');
+          setTimeout(() => setQrStatus(''), 3000);
+          return;
+        }
+        setQrStatus('ok');
+        setPage(1);
+        setAssetId(assetIdFound);
+        setTimeout(() => setQrStatus(''), 3000);
+      };
+      img.onerror = () => {
+        setQrStatus('error');
+        setTimeout(() => setQrStatus(''), 3000);
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
 
   const fetchAssets = useCallback(async () => {
     try {
@@ -72,16 +126,44 @@ function App() {
         {/* Tìm kiếm theo 資產編號 */}
         <div className="col-md-4">
           <label className="form-label">資產編號:</label>
-          <input
-            type="text"
-            className="form-control"
-            placeholder="輸入資產編號"
-            value={assetId}
-            onChange={(e) => {
-              setPage(1);
-              setAssetId(e.target.value);
-            }}
-          />
+          <div className="input-group">
+            <input
+              type="text"
+              className="form-control"
+              placeholder="輸入資產編號"
+              value={assetId}
+              onChange={(e) => {
+                setPage(1);
+                setAssetId(e.target.value);
+              }}
+            />
+            {/* Hidden file input for QR scanning */}
+            <input
+              ref={qrInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              style={{ display: 'none' }}
+              onChange={handleQrFile}
+            />
+            <button
+              className={`btn ${
+                qrStatus === 'ok' ? 'btn-success' :
+                qrStatus === 'error' ? 'btn-danger' :
+                qrStatus === 'scanning' ? 'btn-warning' :
+                'btn-outline-secondary'
+              }`}
+              type="button"
+              title="掃描 QR Code"
+              onClick={() => qrInputRef.current && qrInputRef.current.click()}
+              disabled={qrStatus === 'scanning'}
+            >
+              {qrStatus === 'scanning' ? '⏳' :
+               qrStatus === 'ok' ? '✅' :
+               qrStatus === 'error' ? '❌' :
+               '📷'}
+            </button>
+          </div>
         </div>
 
         {/* Nút Export Excel */}
